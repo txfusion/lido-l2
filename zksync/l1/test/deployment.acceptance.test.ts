@@ -26,8 +26,8 @@ import { defaultAbiCoder } from "ethers/lib/utils";
 
 const ETH_CLIENT_WEB3_URL = process.env.ETH_CLIENT_WEB3_URL as string;
 const ZKSYNC_PROVIDER_URL = process.env.ZKSYNC_PROVIDER_URL as string;
-const CONTRACTS_DIAMOND_PROXY_ADDR = process.env
-  .CONTRACTS_DIAMOND_PROXY_ADDR as string;
+
+const TRANSPARENT_PROXY_ADMIN_STORAGE_SLOT = "0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103"
 
 scenario("Lido on zkSync Era :: deployment acceptance test", ctxFactory)
   .step("L1 Bridge :: proxy admin", async (ctx) => {
@@ -37,6 +37,16 @@ scenario("Lido on zkSync Era :: deployment acceptance test", ctxFactory)
     assert.equal(
       await proxy.l1Bridge.proxy__getAdmin(),
       ZKSYNC_ADDRESSES.l1.agent
+    );
+  })
+
+  .step("L1 Bridge :: proxy implementation", async (ctx) => {
+    const {
+      l1: { proxy },
+    } = ctx;
+    assert.equal(
+      await proxy.l1Bridge.proxy__getImplementation(),
+      ZKSYNC_ADDRESSES.l1.l1BridgeImpl
     );
   })
 
@@ -68,12 +78,29 @@ scenario("Lido on zkSync Era :: deployment acceptance test", ctxFactory)
     assert.equal(await l1Bridge.l2Token(), ZKSYNC_ADDRESSES.l2.l2Token);
   })
 
+
+  .step("L1 Bridge :: L2 Token address", async (ctx) => {
+    const {
+      l1: { l1Bridge },
+    } = ctx;
+
+    assert.equal(await l1Bridge.l2TokenAddress(ZKSYNC_ADDRESSES.l1.l1Token), ZKSYNC_ADDRESSES.l2.l2Token);
+  })
+
   .step("L1 Bridge :: L2 Bridge", async (ctx) => {
     const {
       l1: { l1Bridge },
     } = ctx;
 
     assert.equal(await l1Bridge.l2Bridge(), ZKSYNC_ADDRESSES.l2.l2Bridge);
+  })
+
+  .step("L1 Bridge :: zkSync", async (ctx) => {
+    const {
+      l1: { l1Bridge },
+    } = ctx;
+
+    assert.equal(await l1Bridge.zkSync(), ZKSYNC_ADDRESSES.l2.diamondProxy);
   })
 
   .step("L1 Bridge :: is deposits disabled", async (ctx) => {
@@ -158,6 +185,16 @@ scenario("Lido on zkSync Era :: deployment acceptance test", ctxFactory)
     }
   })
 
+  .step("L1 Executor :: proxy implementation", async (ctx) => {
+    const {
+      l1: {
+        proxy: { l1Executor },
+      },
+    } = ctx;
+
+    assert.equal(await l1Executor.proxy__getImplementation(), ZKSYNC_ADDRESSES.l1.l1ExecutorImpl);
+  })
+
   .step("L1 Executor :: proxy admin", async (ctx) => {
     const {
       l1: {
@@ -176,6 +213,14 @@ scenario("Lido on zkSync Era :: deployment acceptance test", ctxFactory)
     assert.equal(await l1Executor.owner(), ZKSYNC_ADDRESSES.l1.agent);
   })
 
+  .step("L1 Executor :: zksync", async (ctx) => {
+    const {
+      l1: { l1Executor },
+    } = ctx;
+
+    assert.equal(await l1Executor.zksync(), ZKSYNC_ADDRESSES.l2.diamondProxy);
+  })
+
   /**
    *
    * L2
@@ -189,6 +234,16 @@ scenario("Lido on zkSync Era :: deployment acceptance test", ctxFactory)
     assert.equal(
       await proxy.l2Bridge.proxy__getAdmin(),
       ZKSYNC_ADDRESSES.l2.govExecutor
+    );
+  })
+
+  .step("L2 Bridge :: proxy implementation", async (ctx) => {
+    const {
+      l2: { proxy },
+    } = ctx;
+    assert.equal(
+      await proxy.l2Bridge.proxy__getImplementation(),
+      ZKSYNC_ADDRESSES.l2.l2BridgeImpl
     );
   })
 
@@ -307,7 +362,7 @@ scenario("Lido on zkSync Era :: deployment acceptance test", ctxFactory)
     }
   })
 
-  .step("L2 Token :: proxy admin", async (ctx) => {
+  .step("L2 Token :: proxy admin checks", async (ctx) => {
     const {
       l2: {
         accounts: { deployer },
@@ -317,17 +372,29 @@ scenario("Lido on zkSync Era :: deployment acceptance test", ctxFactory)
 
     const proxyAdminAddressBytes32 = await zkProvider.getStorageAt(
       ZKSYNC_ADDRESSES.l2.l2Token,
-      "0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103" // storage where admin address is stored
+      TRANSPARENT_PROXY_ADMIN_STORAGE_SLOT
     ); // returns bytes32
 
-    const proxyAdminAddress = defaultAbiCoder.decode(
+    const proxyAdminAddress = String(defaultAbiCoder.decode(
       ["address"],
       proxyAdminAddressBytes32
-    ); // returns Result => []
+    )[0]); // returns Result => [], 0 index is the location of address
+
+    assert.equal(proxyAdminAddress, ZKSYNC_ADDRESSES.l2.proxyAdmin);
 
     const proxyAdminContract = ProxyAdmin__factory.connect(
-      proxyAdminAddress[0], // proxyAdminAddress 0 index is the location of address
+      proxyAdminAddress,
       deployer
+    );
+
+    assert.equal(
+      await proxyAdminContract.getProxyAdmin(ZKSYNC_ADDRESSES.l2.l2Token),
+      ZKSYNC_ADDRESSES.l2.proxyAdmin
+    );
+
+    assert.equal(
+      await proxyAdminContract.getProxyImplementation(ZKSYNC_ADDRESSES.l2.l2Token),
+      ZKSYNC_ADDRESSES.l2.l2TokenImpl
     );
 
     const L2TokenProxyAdminOwner = await proxyAdminContract.owner();
@@ -363,7 +430,7 @@ scenario("Lido on zkSync Era :: deployment acceptance test", ctxFactory)
     assert.equal(await ctx.l2.l2Token.bridge(), ZKSYNC_ADDRESSES.l2.l2Bridge);
   })
 
-  .step("L2 Governance Executor :: proxy admin", async (ctx) => {
+  .step("L2 Governance Executor :: proxy admin checks", async (ctx) => {
     const {
       l2: {
         accounts: { deployer },
@@ -373,17 +440,29 @@ scenario("Lido on zkSync Era :: deployment acceptance test", ctxFactory)
 
     const proxyAdminAddressBytes32 = await zkProvider.getStorageAt(
       ZKSYNC_ADDRESSES.l2.govExecutor,
-      "0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103"
+      TRANSPARENT_PROXY_ADMIN_STORAGE_SLOT
     ); // returns bytes32
 
-    const proxyAdminAddress = defaultAbiCoder.decode(
+    const proxyAdminAddress = String(defaultAbiCoder.decode(
       ["address"],
       proxyAdminAddressBytes32
-    ); // returns Result => []
+    )[0]); // returns Result => [], 0 index is the location of address
+
+    assert.equal(proxyAdminAddress, ZKSYNC_ADDRESSES.l2.proxyAdmin);
 
     const proxyAdminContract = ProxyAdmin__factory.connect(
-      proxyAdminAddress[0], // proxyAdminAddress 0 index is the location of address
+      proxyAdminAddress,
       deployer
+    );
+
+    assert.equal(
+      await proxyAdminContract.getProxyAdmin(ZKSYNC_ADDRESSES.l2.govExecutor),
+      ZKSYNC_ADDRESSES.l2.proxyAdmin
+    );
+
+    assert.equal(
+      await proxyAdminContract.getProxyImplementation(ZKSYNC_ADDRESSES.l2.govExecutor),
+      ZKSYNC_ADDRESSES.l2.govExecutorImpl
     );
 
     const L2TokenProxyAdminOwner = await proxyAdminContract.owner();
@@ -482,7 +561,7 @@ async function ctxFactory() {
       },
       l1Bridge: new L1ERC20Bridge__factory(ethDeployer).attach(l1.l1Bridge),
       l1Executor: new L1Executor__factory(ethDeployer).attach(l1.l1Executor),
-      zkSync: IZkSyncFactory.connect(CONTRACTS_DIAMOND_PROXY_ADDR, ethDeployer),
+      zkSync: IZkSyncFactory.connect(ZKSYNC_ADDRESSES.l2.diamondProxy, ethDeployer),
       accounts: {
         deployer: ethDeployer,
       },
